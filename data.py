@@ -81,7 +81,7 @@ class SyntheticImageCaptionDataset(Dataset):
     def __init__(self,
                  image_size=512,
                  caption_length=77,
-                 num_samples=100_000):
+                 num_samples=400_000):
         """
         Args:
             num_samples (int): Number of samples in the dataset.
