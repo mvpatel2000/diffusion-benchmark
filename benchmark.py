@@ -52,8 +52,8 @@ class StableDiffusion(composer.models.ComposerModel):
         super().__init__()
         self.unet = UNet2DConditionModel.from_pretrained(model_name, subfolder='unet')
         if is_xformers_installed:
-            from xformers.ops import TritonFlashAttentionOp
-            self.unet.enable_xformers_memory_efficient_attention(TritonFlashAttentionOp)
+            from xformers.ops import MemoryEfficientAttentionTritonFwdFlashBwOp
+            self.unet.enable_xformers_memory_efficient_attention(MemoryEfficientAttentionTritonFwdFlashBwOp)
         self.vae = AutoencoderKL.from_pretrained(model_name, subfolder='vae')
         self.text_encoder = CLIPTextModel.from_pretrained(model_name, subfolder='text_encoder')
         self.noise_scheduler = DDPMScheduler.from_pretrained(model_name, subfolder='scheduler')
