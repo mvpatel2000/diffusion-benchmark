@@ -51,9 +51,10 @@ class StableDiffusion(composer.models.ComposerModel):
     def __init__(self, model_name: str = 'stabilityai/stable-diffusion-2-base'):
         super().__init__()
         self.unet = UNet2DConditionModel.from_pretrained(model_name, subfolder='unet')
+        self.vae = AutoencoderKL.from_pretrained(model_name, subfolder='vae')
         if is_xformers_installed:
             self.unet.enable_xformers_memory_efficient_attention()
-        self.vae = AutoencoderKL.from_pretrained(model_name, subfolder='vae')
+            self.vae.enable_xformers_memory_efficient_attention()
         self.text_encoder = CLIPTextModel.from_pretrained(model_name, subfolder='text_encoder')
         self.noise_scheduler = DDPMScheduler.from_pretrained(model_name, subfolder='scheduler')
 
