@@ -127,7 +127,7 @@ def main(args):
     if args.use_ema:
         ema = EMA()
 
-    speed_monitor = composer.callbacks.SpeedMonitor(window_size=25)
+    speed_monitor = composer.callbacks.SpeedMonitor(window_size=100)
 
     logger = composer.loggers.WandBLogger(name=args.wandb_name, project=args.wandb_project)
 
