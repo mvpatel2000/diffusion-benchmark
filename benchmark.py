@@ -144,7 +144,7 @@ def main(args):
         algorithms=ema,
         callbacks=speed_monitor,
         loggers=logger,
-        max_duration='5ep',
+        max_duration='1ep',
         device_train_microbatch_size=device_train_microbatch_size,
     )
     trainer.fit()
