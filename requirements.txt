@@ -1,5 +1,5 @@
-torch==1.12.1
-torchvision>=0.11.0
+torch
+torchvision
 mosaicml-streaming
 mosaicml[wandb]==0.12.0
 ninja # Faster xformers install
