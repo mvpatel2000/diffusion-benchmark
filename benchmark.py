@@ -8,7 +8,7 @@ import torch
 import torch.nn.functional as F
 from composer.utils import dist, reproducibility
 from composer.devices import DeviceGPU
-from compoesr.callbacks import MemoryMonitor, SpeedMonitor
+from composer.callbacks import MemoryMonitor, SpeedMonitor
 from diffusers import AutoencoderKL, DDPMScheduler, UNet2DConditionModel
 from torch.utils.data import DataLoader
 from torchvision import transforms
