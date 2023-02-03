@@ -60,6 +60,7 @@ class Conv1x1(Algorithm):
 
 def _maybe_replace_conv2d(
     module: torch.nn.Conv2d,
+    module_index: int,
 ):
     if module.kernel_size == 1 or module.kernel_size == (1, 1):
         return LinearConv(module.weight, module.bias)
