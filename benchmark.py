@@ -30,6 +30,7 @@ parser = argparse.ArgumentParser()
 # Dataloader arguments
 parser.add_argument('--batch_size', type=int, default=2048)
 parser.add_argument('--image_size', type=int, default=512)
+parser.add_argument('--num_samples', type=int, default=800000)
 parser.add_argument('--remote', type=str)
 parser.add_argument('--local', type=str, default='/tmp/mds-cache/mds-laion-2/')
 parser.add_argument('--use_synth_data', action='store_true')
@@ -106,7 +107,7 @@ def main(args):
 
     sampler = None
     if args.use_synth_data:
-        train_dataset = SyntheticImageCaptionDataset(image_size=args.image_size)
+        train_dataset = SyntheticImageCaptionDataset(image_size=args.image_size, num_samples=args.num_samples)
         sampler = dist.get_sampler(train_dataset, drop_last=True, shuffle=True)
     else:
         resize_transform = transforms.Resize((args.image_size, args.image_size))
