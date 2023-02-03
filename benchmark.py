@@ -8,6 +8,7 @@ import torch
 import torch.nn.functional as F
 from composer.utils import dist, reproducibility
 from composer.devices import DeviceGPU
+from compoesr.callbacks import MemoryMonitor, SpeedMonitor
 from diffusers import AutoencoderKL, DDPMScheduler, UNet2DConditionModel
 from torch.utils.data import DataLoader
 from torchvision import transforms
@@ -133,7 +134,10 @@ def main(args):
     if args.use_ema:
         ema = EMA()
 
-    speed_monitor = composer.callbacks.SpeedMonitor(window_size=100)
+    callbacks = [
+        SpeedMonitor(window_size=100),
+        MemoryMonitor(),
+    ]
 
     logger = composer.loggers.WandBLogger(name=args.wandb_name, project=args.wandb_project)
 
@@ -147,7 +151,7 @@ def main(args):
         optimizers=optimizer,
         schedulers=lr_scheduler,
         algorithms=ema,
-        callbacks=speed_monitor,
+        callbacks=callbacks,
         loggers=logger,
         max_duration='1ep',
         device_train_microbatch_size=device_train_microbatch_size,
