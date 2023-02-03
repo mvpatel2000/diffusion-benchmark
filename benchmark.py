@@ -7,6 +7,7 @@ import composer
 import torch
 import torch.nn.functional as F
 from composer.utils import dist, reproducibility
+from composer.devices import DeviceGPU
 from diffusers import AutoencoderKL, DDPMScheduler, UNet2DConditionModel
 from torch.utils.data import DataLoader
 from torchvision import transforms
@@ -52,9 +53,6 @@ class StableDiffusion(composer.models.ComposerModel):
         super().__init__()
         self.unet = UNet2DConditionModel.from_pretrained(model_name, subfolder='unet')
         self.vae = AutoencoderKL.from_pretrained(model_name, subfolder='vae')
-        if is_xformers_installed:
-            self.unet.enable_xformers_memory_efficient_attention()
-            self.vae.enable_xformers_memory_efficient_attention()
         self.text_encoder = CLIPTextModel.from_pretrained(model_name, subfolder='text_encoder')
         self.noise_scheduler = DDPMScheduler.from_pretrained(model_name, subfolder='scheduler')
 
@@ -92,6 +90,13 @@ def main(args):
     reproducibility.seed_all(17)
 
     model = StableDiffusion(model_name=args.model_name)
+
+    # Enable xformers memory efficient attention after model has moved to device. Otherwise,
+    # xformers will leak memory on rank 0 and never clean it up for non-rank 0 processes.
+    model = DeviceGPU().module_to_device(model)
+    if is_xformers_installed:
+        model.unet.enable_xformers_memory_efficient_attention()
+        model.vae.enable_xformers_memory_efficient_attention()
 
     optimizer = torch.optim.AdamW(params=model.parameters(), lr=1.0e-4, weight_decay=0.001)
     lr_scheduler = composer.optim.ConstantScheduler()
