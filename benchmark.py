@@ -14,6 +14,7 @@ from transformers import CLIPTextModel
 
 
 from ema import EMA
+from conv1x1 import Conv1x1
 from data import StreamingLAIONDataset, SyntheticImageCaptionDataset
 
 try:
@@ -35,8 +36,9 @@ parser.add_argument('--use_synth_data', action='store_true')
 # Model argument
 parser.add_argument('--model_name', type=str, default='stabilityai/stable-diffusion-2-base')
 
-# EMA argument
+# Algorithms argument
 parser.add_argument('--use_ema', action='store_true')
+parser.add_argument('--use_conv1x1', action='store_true')
 
 # Logger arguments
 parser.add_argument('--wandb_name', type=str)
@@ -124,9 +126,11 @@ def main(args):
         pin_memory=True,
     )
 
-    ema = None
+    algos = []
     if args.use_ema:
-        ema = EMA()
+        algos.append(EMA())
+    if args.use_conv1x1:
+        algos.append(Conv1x1())
 
     speed_monitor = composer.callbacks.SpeedMonitor(window_size=100)
 
@@ -141,7 +145,7 @@ def main(args):
         train_dataloader=train_dataloader,
         optimizers=optimizer,
         schedulers=lr_scheduler,
-        algorithms=ema,
+        algorithms=algos,
         callbacks=speed_monitor,
         loggers=logger,
         max_duration='1ep',
