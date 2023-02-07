@@ -7,6 +7,8 @@ import composer
 import torch
 import torch.nn.functional as F
 from composer.utils import dist, reproducibility
+from composer.devices import DeviceGPU
+from composer.callbacks import MemoryMonitor, SpeedMonitor
 from diffusers import AutoencoderKL, DDPMScheduler, UNet2DConditionModel
 from torch.utils.data import DataLoader
 from torchvision import transforms
@@ -29,6 +31,7 @@ parser = argparse.ArgumentParser()
 # Dataloader arguments
 parser.add_argument('--batch_size', type=int, default=2048)
 parser.add_argument('--image_size', type=int, default=512)
+parser.add_argument('--num_samples', type=int, default=800000)
 parser.add_argument('--remote', type=str)
 parser.add_argument('--local', type=str, default='/tmp/mds-cache/mds-laion-2/')
 parser.add_argument('--use_synth_data', action='store_true')
@@ -54,9 +57,6 @@ class StableDiffusion(composer.models.ComposerModel):
         super().__init__()
         self.unet = UNet2DConditionModel.from_pretrained(model_name, subfolder='unet')
         self.vae = AutoencoderKL.from_pretrained(model_name, subfolder='vae')
-        if is_xformers_installed:
-            self.unet.enable_xformers_memory_efficient_attention()
-            self.vae.enable_xformers_memory_efficient_attention()
         self.text_encoder = CLIPTextModel.from_pretrained(model_name, subfolder='text_encoder')
         self.noise_scheduler = DDPMScheduler.from_pretrained(model_name, subfolder='scheduler')
 
@@ -95,6 +95,13 @@ def main(args):
 
     model = StableDiffusion(model_name=args.model_name)
 
+    # Enable xformers memory efficient attention after model has moved to device. Otherwise,
+    # xformers will leak memory on rank 0 and never clean it up for non-rank 0 processes.
+    model = DeviceGPU().module_to_device(model)
+    if is_xformers_installed:
+        model.unet.enable_xformers_memory_efficient_attention()
+        model.vae.enable_xformers_memory_efficient_attention()
+
     optimizer = torch.optim.AdamW(params=model.parameters(), lr=1.0e-4, weight_decay=0.001)
     lr_scheduler = composer.optim.ConstantScheduler()
 
@@ -102,7 +109,7 @@ def main(args):
 
     sampler = None
     if args.use_synth_data:
-        train_dataset = SyntheticImageCaptionDataset(image_size=args.image_size)
+        train_dataset = SyntheticImageCaptionDataset(image_size=args.image_size, num_samples=args.num_samples)
         sampler = dist.get_sampler(train_dataset, drop_last=True, shuffle=True)
     else:
         resize_transform = transforms.Resize((args.image_size, args.image_size))
@@ -132,7 +139,10 @@ def main(args):
     if args.use_conv1x1:
         algos.append(Conv1x1())
 
-    speed_monitor = composer.callbacks.SpeedMonitor(window_size=100)
+    callbacks = [
+        SpeedMonitor(window_size=100),
+        MemoryMonitor(),
+    ]
 
     logger = composer.loggers.WandBLogger(name=args.wandb_name, project=args.wandb_project)
 
@@ -146,7 +156,7 @@ def main(args):
         optimizers=optimizer,
         schedulers=lr_scheduler,
         algorithms=algos,
-        callbacks=speed_monitor,
+        callbacks=callbacks,
         loggers=logger,
         max_duration='1ep',
         device_train_microbatch_size=device_train_microbatch_size,
