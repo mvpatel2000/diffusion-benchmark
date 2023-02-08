@@ -155,6 +155,8 @@ def main(args):
         callbacks=callbacks,
         loggers=logger,
         max_duration='1ep',
+        progress_bar=False,
+        log_to_console=True,
         device_train_microbatch_size=device_train_microbatch_size,
     )
     trainer.fit()
