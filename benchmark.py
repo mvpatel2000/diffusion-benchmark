@@ -6,6 +6,7 @@ import argparse
 import composer
 import torch
 import torch.nn.functional as F
+from composer.algorithms import ChannelsLast
 from composer.utils import dist, reproducibility
 from composer.devices import DeviceGPU
 from composer.callbacks import MemoryMonitor, SpeedMonitor
@@ -42,6 +43,7 @@ parser.add_argument('--model_name', type=str, default='stabilityai/stable-diffus
 # Algorithms argument
 parser.add_argument('--use_ema', action='store_true')
 parser.add_argument('--use_conv1x1', action='store_true')
+parser.add_argument('--use_channels_last', action='store_true')
 
 # Logger arguments
 parser.add_argument('--wandb_name', type=str)
@@ -136,6 +138,8 @@ def main(args):
     algos = []
     if args.use_ema:
         algos.append(EMA())
+    if args.use_channels_last:
+        algos.append(ChannelsLast())
     if args.use_conv1x1:
         algos.append(Conv1x1())
 
