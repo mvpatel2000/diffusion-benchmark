@@ -9,15 +9,14 @@ import torch
 import torch.nn.functional as F
 from composer.utils import dist, reproducibility
 from composer.devices import DeviceGPU
-from composer.callbacks import MemoryMonitor, SpeedMonitor
+from composer.callbacks import SpeedMonitor
 from diffusers import AutoencoderKL, DDPMScheduler, UNet2DConditionModel
 from torch.utils.data import DataLoader
-from torchvision import transforms
 from transformers import CLIPTextModel
 
 
 from ema import EMA
-from data import StreamingLAIONDataset, SyntheticImageCaptionDataset, SyntheticLatentsDataset
+from data import SyntheticImageCaptionDataset, SyntheticLatentsDataset
 
 try:
     import xformers
@@ -32,7 +31,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--batch_size', type=int, default=32)
 parser.add_argument('--image_size', type=int, default=512)
 parser.add_argument('--num_samples', type=int, default=100000)
-parser.add_argument('--use_latents', action='store_true')
+parser.add_argument('--use_latents', type=bool, default=False)
 
 # Model argument
 parser.add_argument('--model_name', type=str, default='stabilityai/stable-diffusion-2-base')
@@ -76,12 +75,26 @@ class StableDiffusion(composer.models.ComposerModel):
             # Magical scaling number (See https://github.com/huggingface/diffusers/issues/437#issuecomment-1241827515)
             latents *= 0.18215
 
+            print(f'VAE time: {time.time() - start_time}')
+            start_time = time.time()
+
+            print(captions[0, 0])
+            print(f'Load captions time: {time.time() - start_time}')
+            start_time = time.time()
+
             # Encode the text. Assumes that the text is already tokenized
             conditioning = self.text_encoder(captions)[0]  # Should be (batch_size, 77, 768)
+            print(f'CLIP time: {time.time() - start_time}')
+            start_time = time.time()
+
+            # for i in range(10):
+            #     iter_time = time.time()
+            #     self.text_encoder(captions)[0]
+            #     print(f'CLIP iter {i} time: {time.time() - iter_time}')
+            # print(f'Average CLIP time: {(time.time() - start_time)/10}')
+            # start_time = time.time()
         else:
             latents, conditioning = images, captions
-        print(f'Non-unet time: {time.time() - start_time}')
-        start_time = time.time()
 
         # Sample the diffusion timesteps
         timesteps = torch.randint(1, len(self.noise_scheduler), (latents.shape[0], ), device=latents.device)
@@ -168,9 +181,10 @@ def main(args):
         loggers=loggers,
         max_duration='1ep',
         device_train_microbatch_size=device_train_microbatch_size,
-        train_subset_num_batches=4,
+        train_subset_num_batches=1,
         progress_bar=False,
         log_to_console=True,
+        console_log_interval='1ba'
     )
     trainer.fit()
 
