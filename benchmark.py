@@ -16,7 +16,7 @@ from transformers import CLIPTextModel
 
 
 from ema import EMA
-from data import StreamingLAIONDataset, SyntheticImageCaptionDataset
+from data import StreamingLAIONDataset, SyntheticImageCaptionDataset, SyntheticLatentsDataset
 
 try:
     import xformers
@@ -34,6 +34,7 @@ parser.add_argument('--num_samples', type=int, default=800000)
 parser.add_argument('--remote', type=str)
 parser.add_argument('--local', type=str, default='/tmp/mds-cache/mds-laion-2/')
 parser.add_argument('--use_synth_data', action='store_true')
+parser.add_argument('--use_latents', action='store_true')
 
 # Model argument
 parser.add_argument('--model_name', type=str, default='stabilityai/stable-diffusion-2-base')
@@ -51,8 +52,9 @@ args = parser.parse_args()
 
 class StableDiffusion(composer.models.ComposerModel):
 
-    def __init__(self, model_name: str = 'stabilityai/stable-diffusion-2-base'):
+    def __init__(self, model_name: str = 'stabilityai/stable-diffusion-2-base', use_latents: bool = False):
         super().__init__()
+        self.use_latents = use_latents
         self.unet = UNet2DConditionModel.from_pretrained(model_name, subfolder='unet')
         self.vae = AutoencoderKL.from_pretrained(model_name, subfolder='vae')
         self.text_encoder = CLIPTextModel.from_pretrained(model_name, subfolder='text_encoder')
@@ -65,13 +67,16 @@ class StableDiffusion(composer.models.ComposerModel):
     def forward(self, batch):
         images, captions = batch['image'], batch['caption']
 
-        # Encode the images to the latent space.
-        latents = self.vae.encode(images)['latent_dist'].sample().data
-        # Magical scaling number (See https://github.com/huggingface/diffusers/issues/437#issuecomment-1241827515)
-        latents *= 0.18215
+        if not self.use_latents:
+            # Encode the images to the latent space.
+            latents = self.vae.encode(images)['latent_dist'].sample().data
+            # Magical scaling number (See https://github.com/huggingface/diffusers/issues/437#issuecomment-1241827515)
+            latents *= 0.18215
 
-        # Encode the text. Assumes that the text is already tokenized
-        conditioning = self.text_encoder(captions)[0]  # Should be (batch_size, 77, 768)
+            # Encode the text. Assumes that the text is already tokenized
+            conditioning = self.text_encoder(captions)[0]  # Should be (batch_size, 77, 768)
+        else:
+            latents, conditioning = images, captions
 
         # Sample the diffusion timesteps
         timesteps = torch.randint(1, len(self.noise_scheduler), (latents.shape[0], ), device=latents.device)
@@ -107,9 +112,14 @@ def main(args):
 
     sampler = None
     if args.use_synth_data:
-        train_dataset = SyntheticImageCaptionDataset(image_size=args.image_size, num_samples=args.num_samples)
+        if args.use_latents:
+           train_dataset = SyntheticLatentsDataset(image_size=args.image_size, num_samples=args.num_samples)
+        else:
+            train_dataset = SyntheticImageCaptionDataset(image_size=args.image_size, num_samples=args.num_samples)
         sampler = dist.get_sampler(train_dataset, drop_last=True, shuffle=True)
     else:
+        if args.use_latents:
+            raise ValueError('--use_latents is valid unless using synthetic data --use_synth_data')
         resize_transform = transforms.Resize((args.image_size, args.image_size))
         transform = transforms.Compose([resize_transform, transforms.ToTensor()])
         train_dataset = StreamingLAIONDataset(remote=args.remote,

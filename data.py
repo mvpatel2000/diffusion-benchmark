@@ -98,3 +98,27 @@ class SyntheticImageCaptionDataset(Dataset):
         image = torch.randn(3, self.image_size, self.image_size)
         caption = torch.randint(0, 128, (self.caption_length,), dtype=torch.long)
         return {'image': image, 'caption': caption}
+
+class SyntheticLatentsDataset(Dataset):
+    """Synthetic dataset imitating a dataset of latents of images plus captions."""
+
+    def __init__(self,
+                 image_size=512,
+                 caption_length=77,
+                 num_samples=800_000):
+        """
+        Args:
+            num_samples (int): Number of samples in the dataset.
+            image_size (int): Size of the images.
+        """
+        self.num_samples = num_samples
+        self.image_size = image_size
+        self.caption_length = caption_length
+
+    def __len__(self):
+        return self.num_samples
+
+    def __getitem__(self, idx):
+        image = torch.randn(4, self.image_size // 8, self.image_size // 8)
+        caption = torch.randn(self.caption_length, 1024)
+        return {'image': image, 'caption': caption}
