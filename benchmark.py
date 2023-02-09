@@ -104,7 +104,8 @@ def main(args):
     model = DeviceGPU().module_to_device(model)
     if is_xformers_installed:
         model.unet.enable_xformers_memory_efficient_attention()
-        model.vae.enable_xformers_memory_efficient_attention()
+        if not args.use_latents:
+            model.vae.enable_xformers_memory_efficient_attention()
 
     optimizer = torch.optim.AdamW(params=model.parameters(), lr=1.0e-4, weight_decay=0.001)
     lr_scheduler = composer.optim.ConstantScheduler()
