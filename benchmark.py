@@ -96,7 +96,7 @@ class StableDiffusion(composer.models.ComposerModel):
 def main(args):
     reproducibility.seed_all(17)
 
-    model = StableDiffusion(model_name=args.model_name)
+    model = StableDiffusion(model_name=args.model_name, use_latents=args.use_latents)
 
     # Enable xformers memory efficient attention after model has moved to device. Otherwise,
     # xformers will leak memory on rank 0 and never clean it up for non-rank 0 processes.
