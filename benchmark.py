@@ -56,14 +56,14 @@ class StableDiffusion(composer.models.ComposerModel):
         super().__init__()
         self.use_latents = use_latents
         self.unet = UNet2DConditionModel.from_pretrained(model_name, subfolder='unet')
+        self.noise_scheduler = DDPMScheduler.from_pretrained(model_name, subfolder='scheduler')
         if not self.use_latents:
             self.vae = AutoencoderKL.from_pretrained(model_name, subfolder='vae')
             self.text_encoder = CLIPTextModel.from_pretrained(model_name, subfolder='text_encoder')
-        self.noise_scheduler = DDPMScheduler.from_pretrained(model_name, subfolder='scheduler')
 
-        # Freeze vae and text_encoder when training
-        self.vae.requires_grad_(False)
-        self.text_encoder.requires_grad_(False)
+            # Freeze vae and text_encoder when training
+            self.vae.requires_grad_(False)
+            self.text_encoder.requires_grad_(False)
 
     def forward(self, batch):
         images, captions = batch['image'], batch['caption']
