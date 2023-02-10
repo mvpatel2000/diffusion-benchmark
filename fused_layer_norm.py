@@ -15,33 +15,32 @@ from composer.core import Algorithm, Event, State
 from composer.loggers import Logger
 from composer.utils import module_surgery
 
+try:
+    from xformers.triton.layer_norm import FusedLayerNorm as _FusedLayerNorm
+    is_xformers_installed = True
+except:
+    print('Warning: xformers is not installed.')
+    is_xformers_installed = False
+
+
 log = logging.getLogger(__name__)
 
-__all__ = ['Conv1x1']
-
-class LinearConv(torch.nn.Module):
-    def __init__(self, weight, bias):
-        super().__init__()
-        self.weight = weight[:, :, 0, 0].contiguous()
-        self.bias = bias
-
-    def forward(self, x):
-        return F.linear(x.permute(0, 2, 3, 1), self.weight, self.bias).permute(0, 3, 1, 2)
+__all__ = ['FusedLayerNorm']
 
 
-def apply_conv1x1(model: torch.nn.Module,
+def apply_fusedlayernorm(model: torch.nn.Module,
                   optimizers: Optional[Union[Optimizer, Sequence[Optimizer]]] = None) -> torch.nn.Module:
     transforms = {
-        torch.nn.Conv2d: functools.partial(
-            _maybe_replace_conv2d,
-        )
+        torch.nn.LayerNorm: functools.partial(
+            _replace_layer_norm,
+        ),
     }
     module_surgery.replace_module_classes(model, optimizers=optimizers, policies=transforms)
 
     return model
 
 
-class Conv1x1(Algorithm):
+class FusedLayerNorm(Algorithm):
     def __repr__(self) -> str:
         return f'{self.__class__.__name__}()'
 
@@ -54,13 +53,15 @@ class Conv1x1(Algorithm):
 
     def apply(self, event: Event, state: State, logger: Logger) -> Optional[int]:
         assert state.model is not None
-        apply_conv1x1(state.model, optimizers=state.optimizers)
+        apply_fusedlayernorm(state.model, optimizers=state.optimizers)
 
-def _maybe_replace_conv2d(
-    module: torch.nn.Conv2d,
+def _replace_layer_norm(
+    module: torch.nn.LayerNorm,
     module_index: int,
 ):
-    if module.kernel_size == 1 or module.kernel_size == (1, 1):
-        print(module.weight.shape, module.bias.shape)
-        return LinearConv(module.weight, module.bias)
-    return None
+    if not is_xformers_installed:
+        return None
+    layer = _FusedLayerNorm(module.normalized_shape)
+    layer.weight = module.weight
+    layer.bias = module.bias
+    return layer

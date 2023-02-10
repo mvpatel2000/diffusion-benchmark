@@ -17,23 +17,21 @@ from composer.utils import module_surgery
 
 log = logging.getLogger(__name__)
 
-__all__ = ['Conv1x1']
+__all__ = ['FusedGroupNorm']
 
-class LinearConv(torch.nn.Module):
-    def __init__(self, weight, bias):
+class GroupNorm(torch.nn.Module):
+    def __init__(self):
         super().__init__()
-        self.weight = weight[:, :, 0, 0].contiguous()
-        self.bias = bias
 
     def forward(self, x):
-        return F.linear(x.permute(0, 2, 3, 1), self.weight, self.bias).permute(0, 3, 1, 2)
+        return x
 
 
-def apply_conv1x1(model: torch.nn.Module,
+def apply_groupnorm(model: torch.nn.Module,
                   optimizers: Optional[Union[Optimizer, Sequence[Optimizer]]] = None) -> torch.nn.Module:
     transforms = {
-        torch.nn.Conv2d: functools.partial(
-            _maybe_replace_conv2d,
+        torch.nn.GroupNorm: functools.partial(
+            _replace_group_norm,
         )
     }
     module_surgery.replace_module_classes(model, optimizers=optimizers, policies=transforms)
@@ -41,7 +39,7 @@ def apply_conv1x1(model: torch.nn.Module,
     return model
 
 
-class Conv1x1(Algorithm):
+class FusedGroupNorm(Algorithm):
     def __repr__(self) -> str:
         return f'{self.__class__.__name__}()'
 
@@ -54,13 +52,10 @@ class Conv1x1(Algorithm):
 
     def apply(self, event: Event, state: State, logger: Logger) -> Optional[int]:
         assert state.model is not None
-        apply_conv1x1(state.model, optimizers=state.optimizers)
+        apply_groupnorm(state.model, optimizers=state.optimizers)
 
-def _maybe_replace_conv2d(
-    module: torch.nn.Conv2d,
+def _replace_group_norm(
+    module: torch.nn.GroupNorm,
     module_index: int,
 ):
-    if module.kernel_size == 1 or module.kernel_size == (1, 1):
-        print(module.weight.shape, module.bias.shape)
-        return LinearConv(module.weight, module.bias)
-    return None
+    return GroupNorm()
