@@ -75,26 +75,18 @@ class StableDiffusion(composer.models.ComposerModel):
             # Magical scaling number (See https://github.com/huggingface/diffusers/issues/437#issuecomment-1241827515)
             latents *= 0.18215
 
+            torch.cuda.synchronize()
             print(f'VAE time: {time.time() - start_time}')
-            start_time = time.time()
-
-            print(captions[0, 0])
-            print(f'Load captions time: {time.time() - start_time}')
             start_time = time.time()
 
             # Encode the text. Assumes that the text is already tokenized
             conditioning = self.text_encoder(captions)[0]  # Should be (batch_size, 77, 768)
+            torch.cuda.synchronize()
             print(f'CLIP time: {time.time() - start_time}')
             start_time = time.time()
-
-            # for i in range(10):
-            #     iter_time = time.time()
-            #     self.text_encoder(captions)[0]
-            #     print(f'CLIP iter {i} time: {time.time() - iter_time}')
-            # print(f'Average CLIP time: {(time.time() - start_time)/10}')
-            # start_time = time.time()
         else:
             latents, conditioning = images, captions
+
 
         # Sample the diffusion timesteps
         timesteps = torch.randint(1, len(self.noise_scheduler), (latents.shape[0], ), device=latents.device)
@@ -103,6 +95,7 @@ class StableDiffusion(composer.models.ComposerModel):
         noised_latents = self.noise_scheduler.add_noise(latents, noise, timesteps)
         # Forward through the model
         out = self.unet(noised_latents, timesteps, conditioning)['sample'], noise
+        torch.cuda.synchronize()
         print(f'Unet time: {time.time() - start_time}')
         return out
 
@@ -181,7 +174,7 @@ def main(args):
         loggers=loggers,
         max_duration='1ep',
         device_train_microbatch_size=device_train_microbatch_size,
-        train_subset_num_batches=1,
+        train_subset_num_batches=4,
         progress_bar=False,
         log_to_console=True,
         console_log_interval='1ba'

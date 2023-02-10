@@ -21,5 +21,6 @@ N = 10
 for i in range(N):
     iter_time = time.time()
     text_encoder(captions)[0]
+    torch.cuda.synchronize()
     print(f'CLIP iter {i} time: {time.time() - iter_time}')
 print(f'CLIP time: {(time.time() - start_time)/N}')
