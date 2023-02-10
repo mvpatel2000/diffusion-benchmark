@@ -23,6 +23,7 @@ try:
     import xformers
     is_xformers_installed = True
 except:
+    print('Warning: xformers is not installed.')
     is_xformers_installed = False
 
 
