@@ -27,11 +27,14 @@ except:
 
 parser = argparse.ArgumentParser()
 
+# Benchmarking arguments
+parser.add_argument('--synchronize', action='store_true')
+
 # Dataloader arguments
 parser.add_argument('--batch_size', type=int, default=32)
 parser.add_argument('--image_size', type=int, default=512)
 parser.add_argument('--num_samples', type=int, default=100000)
-parser.add_argument('--use_latents', type=bool, default=False)
+parser.add_argument('--use_latents', type=bool, default=True)
 
 # Model argument
 parser.add_argument('--model_name', type=str, default='stabilityai/stable-diffusion-2-base')
@@ -52,9 +55,10 @@ args = parser.parse_args()
 
 class StableDiffusion(composer.models.ComposerModel):
 
-    def __init__(self, model_name: str = 'stabilityai/stable-diffusion-2-base', use_latents: bool = False):
+    def __init__(self, model_name: str = 'stabilityai/stable-diffusion-2-base', use_latents: bool = False, synchronize: bool = False):
         super().__init__()
         self.use_latents = use_latents
+        self.synchronize = synchronize
         self.unet = UNet2DConditionModel.from_pretrained(model_name, subfolder='unet')
         self.noise_scheduler = DDPMScheduler.from_pretrained(model_name, subfolder='scheduler')
         if not self.use_latents:
@@ -75,13 +79,15 @@ class StableDiffusion(composer.models.ComposerModel):
             # Magical scaling number (See https://github.com/huggingface/diffusers/issues/437#issuecomment-1241827515)
             latents *= 0.18215
 
-            torch.cuda.synchronize()
+            if self.synchronize:
+                torch.cuda.synchronize()
             print(f'VAE time: {time.time() - start_time}')
             start_time = time.time()
 
             # Encode the text. Assumes that the text is already tokenized
             conditioning = self.text_encoder(captions)[0]  # Should be (batch_size, 77, 768)
-            torch.cuda.synchronize()
+            if self.synchronize:
+                torch.cuda.synchronize()
             print(f'CLIP time: {time.time() - start_time}')
             start_time = time.time()
         else:
@@ -95,7 +101,8 @@ class StableDiffusion(composer.models.ComposerModel):
         noised_latents = self.noise_scheduler.add_noise(latents, noise, timesteps)
         # Forward through the model
         out = self.unet(noised_latents, timesteps, conditioning)['sample'], noise
-        torch.cuda.synchronize()
+        if self.synchronize:
+            torch.cuda.synchronize()
         print(f'Unet time: {time.time() - start_time}')
         return out
 
@@ -109,7 +116,7 @@ class StableDiffusion(composer.models.ComposerModel):
 def main(args):
     reproducibility.seed_all(17)
 
-    model = StableDiffusion(model_name=args.model_name, use_latents=args.use_latents)
+    model = StableDiffusion(model_name=args.model_name, use_latents=args.use_latents, synchronize=args.synchronize)
 
     # Enable xformers memory efficient attention after model has moved to device. Otherwise,
     # xformers will leak memory on rank 0 and never clean it up for non-rank 0 processes.
