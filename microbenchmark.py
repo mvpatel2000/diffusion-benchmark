@@ -152,10 +152,10 @@ def main(args):
     algos = []
     if args.use_ema:
         algos.append(EMA())
-    # if args.use_channels_last:
-    #     algos.append(ChannelsLast())
-    # if args.use_conv1x1:
-    #     algos.append(Conv1x1())
+    if args.use_channels_last:
+        algos.append(ChannelsLast())
+    if args.use_conv1x1:
+        algos.append(Conv1x1())
     # if args.use_group_norm:
     #     algos.append(GroupNorm())
 
