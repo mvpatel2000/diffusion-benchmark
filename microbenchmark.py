@@ -16,10 +16,10 @@ from transformers import CLIPTextModel
 
 
 from ema import EMA
-from conv1x1 import Conv1x1
+from linearize_conv import LinearizeConv
 from channels_last import ChannelsLast
 from fused_group_norm import FusedGroupNorm
-from fused_layer_norm import FusedLayerNorm
+from composer.algorithms import FusedLayerNorm
 from data import SyntheticImageCaptionDataset, SyntheticLatentsDataset
 
 try:
@@ -46,10 +46,10 @@ parser.add_argument('--model_name', type=str, default='stabilityai/stable-diffus
 
 # Algorithms argument
 parser.add_argument('--use_ema', default=True)
-parser.add_argument('--use_conv1x1', action='store_true')
+parser.add_argument('--use_linear_conv', action='store_true')
 parser.add_argument('--use_channels_last', action='store_true')
 parser.add_argument('--use_group_norm', action='store_true')
-parser.add_argument('--use_layer_norm', action='store_true')
+parser.add_argument('--use_layer_norm', action='store_false')
 
 # Logger arguments
 parser.add_argument('--wandb_name', type=str)
@@ -160,8 +160,8 @@ def main(args):
         algos.append(EMA())
     if args.use_channels_last:
         algos.append(ChannelsLast())
-    if args.use_conv1x1:
-        algos.append(Conv1x1())
+    if args.use_linear_conv:
+        algos.append(LinearizeConv())
     if args.use_group_norm:
         algos.append(FusedGroupNorm())
     if args.use_layer_norm:
@@ -190,7 +190,7 @@ def main(args):
         loggers=loggers,
         max_duration='1ep',
         device_train_microbatch_size=device_train_microbatch_size,
-        train_subset_num_batches=6,
+        train_subset_num_batches=10,
         progress_bar=False,
         log_to_console=True,
         console_log_interval='1ba'
