@@ -6,6 +6,7 @@ import argparse
 import composer
 import torch
 import torch.nn.functional as F
+from composer.algorithms import FusedLayerNorm
 from composer.utils import dist, reproducibility
 from composer.devices import DeviceGPU
 from composer.callbacks import MemoryMonitor, SpeedMonitor
@@ -41,6 +42,7 @@ parser.add_argument('--model_name', type=str, default='stabilityai/stable-diffus
 
 # EMA argument
 parser.add_argument('--use_ema', action='store_true')
+parser.add_argument('--use_fused_layer_norm', action='store_true')
 
 # Logger arguments
 parser.add_argument('--wandb_name', type=str)
@@ -143,9 +145,11 @@ def main(args):
         pin_memory=True,
     )
 
-    ema = None
+    algorithms = []
     if args.use_ema:
-        ema = EMA()
+        algorithms.append(EMA())
+    if args.use_fused_layer_norm:
+        algorithms.append(FusedLayerNorm())
 
     callbacks = [
         SpeedMonitor(window_size=100),
@@ -163,7 +167,7 @@ def main(args):
         train_dataloader=train_dataloader,
         optimizers=optimizer,
         schedulers=lr_scheduler,
-        algorithms=ema,
+        algorithms=algorithms,
         callbacks=callbacks,
         loggers=logger,
         max_duration='1ep',
