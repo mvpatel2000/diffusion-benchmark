@@ -49,7 +49,7 @@ parser.add_argument('--use_ema', default=True)
 parser.add_argument('--use_linear_conv', action='store_true')
 parser.add_argument('--use_channels_last', action='store_true')
 parser.add_argument('--use_group_norm', action='store_true')
-parser.add_argument('--use_layer_norm', action='store_false')
+parser.add_argument('--use_layer_norm', action='store_true')
 
 # Logger arguments
 parser.add_argument('--wandb_name', type=str)
