@@ -18,7 +18,8 @@ from transformers import CLIPTextModel
 from ema import EMA
 from linearize_conv import LinearizeConv
 from channels_last import ChannelsLast
-from fused_group_norm import FusedGroupNorm
+# from fused_group_norm import FusedGroupNorm
+from low_precision_groupnorm import LowPrecisionGroupNorm as FusedGroupNorm
 from composer.algorithms import FusedLayerNorm
 from data import SyntheticImageCaptionDataset, SyntheticLatentsDataset
 
@@ -48,7 +49,7 @@ parser.add_argument('--model_name', type=str, default='stabilityai/stable-diffus
 parser.add_argument('--use_ema', default=True)
 parser.add_argument('--use_linear_conv', action='store_true')
 parser.add_argument('--use_channels_last', action='store_true')
-parser.add_argument('--use_group_norm', action='store_true')
+parser.add_argument('--use_fused_group_norm', action='store_true')
 parser.add_argument('--use_fused_layer_norm', action='store_true')
 
 # Logger arguments
@@ -162,7 +163,7 @@ def main(args):
         algos.append(ChannelsLast())
     if args.use_linear_conv:
         algos.append(LinearizeConv())
-    if args.use_group_norm:
+    if args.use_fused_group_norm:
         algos.append(FusedGroupNorm())
     if args.use_fused_layer_norm:
         algos.append(FusedLayerNorm())

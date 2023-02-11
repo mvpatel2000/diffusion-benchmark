@@ -17,6 +17,7 @@ from transformers import CLIPTextModel
 
 
 from ema import EMA
+from low_precision_groupnorm import LowPrecisionGroupNorm as FusedGroupNorm
 from data import StreamingLAIONDataset, SyntheticImageCaptionDataset, SyntheticLatentsDataset
 
 try:
@@ -44,6 +45,7 @@ parser.add_argument('--model_name', type=str, default='stabilityai/stable-diffus
 # EMA argument
 parser.add_argument('--use_ema', action='store_true')
 parser.add_argument('--use_fused_layer_norm', action='store_true')
+parser.add_argument('--use_fused_group_norm', action='store_true')
 
 # Logger arguments
 parser.add_argument('--wandb_name', type=str)
@@ -151,6 +153,8 @@ def main(args):
         algorithms.append(EMA())
     if args.use_fused_layer_norm:
         algorithms.append(FusedLayerNorm())
+    if args.use_fused_group_norm:
+        algorithms.append(FusedGroupNorm())
 
     callbacks = [
         SpeedMonitor(window_size=100),
