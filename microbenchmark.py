@@ -18,9 +18,9 @@ from transformers import CLIPTextModel
 from ema import EMA
 from linearize_conv import LinearizeConv
 from channels_last import ChannelsLast
-# from fused_group_norm import FusedGroupNorm
+# from fused_groupnorm import FusedGroupNorm
 from low_precision_groupnorm import LowPrecisionGroupNorm as FusedGroupNorm
-from composer.algorithms import FusedLayerNorm
+from fused_layernorm import FusedLayerNorm
 from data import SyntheticImageCaptionDataset, SyntheticLatentsDataset
 
 try:
@@ -40,7 +40,7 @@ parser.add_argument('--synchronize', action='store_true')
 parser.add_argument('--batch_size', type=int, default=32)
 parser.add_argument('--image_size', type=int, default=512)
 parser.add_argument('--num_samples', type=int, default=100000)
-parser.add_argument('--use_latents', type=bool, default=True)
+parser.add_argument('--use_latents', action='store_true')
 
 # Model argument
 parser.add_argument('--model_name', type=str, default='stabilityai/stable-diffusion-2-base')
@@ -49,8 +49,8 @@ parser.add_argument('--model_name', type=str, default='stabilityai/stable-diffus
 parser.add_argument('--use_ema', default=True)
 parser.add_argument('--use_linear_conv', action='store_true')
 parser.add_argument('--use_channels_last', action='store_true')
-parser.add_argument('--use_fused_group_norm', action='store_true')
-parser.add_argument('--use_fused_layer_norm', action='store_true')
+parser.add_argument('--use_fused_groupnorm', action='store_true')
+parser.add_argument('--use_fused_layernorm', action='store_true')
 
 # Logger arguments
 parser.add_argument('--wandb_name', type=str)
@@ -69,34 +69,38 @@ class StableDiffusion(composer.models.ComposerModel):
         self.unet = UNet2DConditionModel.from_pretrained(model_name, subfolder='unet')
         self.noise_scheduler = DDPMScheduler.from_pretrained(model_name, subfolder='scheduler')
         if not self.use_latents:
-            self.vae = AutoencoderKL.from_pretrained(model_name, subfolder='vae')
-            self.text_encoder = CLIPTextModel.from_pretrained(model_name, subfolder='text_encoder')
+            self.vae = AutoencoderKL.from_pretrained(model_name, subfolder='vae', torch_dtype=torch.float16)
+            self.text_encoder = CLIPTextModel.from_pretrained(model_name, subfolder='text_encoder', torch_dtype=torch.float16)
 
             # Freeze vae and text_encoder when training
             self.vae.requires_grad_(False)
             self.text_encoder.requires_grad_(False)
 
     def forward(self, batch):
+        if self.synchronize:
+            torch.cuda.synchronize()
         start_time = time.time()
         images, captions = batch['image'], batch['caption']
 
         if not self.use_latents:
-            # Encode the images to the latent space.
-            latents = self.vae.encode(images)['latent_dist'].sample().data
-            # Magical scaling number (See https://github.com/huggingface/diffusers/issues/437#issuecomment-1241827515)
-            latents *= 0.18215
+            # Run the VAE and CLIP in fp16 as it is inference only
+            with torch.no_grad(), torch.cuda.amp.autocast(enabled=False):
+                # Encode the images to the latent space.
+                latents = self.vae.encode(images.half())['latent_dist'].sample().data
+                # Magical scaling number (See https://github.com/huggingface/diffusers/issues/437#issuecomment-1241827515)
+                latents *= 0.18215
 
-            if self.synchronize:
-                torch.cuda.synchronize()
-            print(f'VAE time: {time.time() - start_time}')
-            start_time = time.time()
+                if self.synchronize:
+                    torch.cuda.synchronize()
+                print(f'VAE time: {time.time() - start_time}')
+                start_time = time.time()
 
-            # Encode the text. Assumes that the text is already tokenized
-            conditioning = self.text_encoder(captions)[0]  # Should be (batch_size, 77, 768)
-            if self.synchronize:
-                torch.cuda.synchronize()
-            print(f'CLIP time: {time.time() - start_time}')
-            start_time = time.time()
+                # Encode the text. Assumes that the text is already tokenized
+                conditioning = self.text_encoder(captions)[0]  # Should be (batch_size, 77, 768)
+                if self.synchronize:
+                    torch.cuda.synchronize()
+                print(f'CLIP time: {time.time() - start_time}')
+                start_time = time.time()
         else:
             latents, conditioning = images, captions
 
@@ -163,9 +167,9 @@ def main(args):
         algos.append(ChannelsLast())
     if args.use_linear_conv:
         algos.append(LinearizeConv())
-    if args.use_fused_group_norm:
+    if args.use_fused_groupnorm:
         algos.append(FusedGroupNorm())
-    if args.use_fused_layer_norm:
+    if args.use_fused_layernorm:
         algos.append(FusedLayerNorm())
 
     callbacks = [

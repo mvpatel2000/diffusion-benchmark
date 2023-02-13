@@ -99,4 +99,5 @@ class LowPrecisionGroupNorm(Algorithm):
 
     def apply(self, event: Event, state: State, logger: Logger) -> Optional[int]:
         del event, logger  # unused
-        apply_low_precision_groupnorm(model=state.model, optimizers=state.optimizers, precision=state._precision)
+        # VAE/CLIP are already in fp16, only apply to unet
+        apply_low_precision_groupnorm(model=state.model.unet, optimizers=state.optimizers, precision=state._precision)
