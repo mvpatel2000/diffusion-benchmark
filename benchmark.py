@@ -77,7 +77,7 @@ class StableDiffusion(composer.models.ComposerModel):
             # Run the VAE and CLIP in fp16 as it is inference only
             with torch.no_grad(), torch.cuda.amp.autocast(enabled=False):
                 # Encode the images to the latent space.
-                latents = self.vae.encode(images)['latent_dist'].sample().data
+                latents = self.vae.encode(images.half())['latent_dist'].sample().data
                 # Magical scaling number (See https://github.com/huggingface/diffusers/issues/437#issuecomment-1241827515)
                 latents *= 0.18215
 
