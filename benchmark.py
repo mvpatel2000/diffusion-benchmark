@@ -6,7 +6,6 @@ import argparse
 import composer
 import torch
 import torch.nn.functional as F
-from composer.algorithms import FusedLayerNorm
 from composer.utils import dist, reproducibility
 from composer.devices import DeviceGPU
 from composer.callbacks import MemoryMonitor, SpeedMonitor
@@ -18,6 +17,7 @@ from transformers import CLIPTextModel
 
 from ema import EMA
 from low_precision_groupnorm import LowPrecisionGroupNorm as FusedGroupNorm
+from fused_layernorm import FusedLayerNorm
 from data import StreamingLAIONDataset, SyntheticImageCaptionDataset, SyntheticLatentsDataset
 
 try:
@@ -44,8 +44,8 @@ parser.add_argument('--model_name', type=str, default='stabilityai/stable-diffus
 
 # EMA argument
 parser.add_argument('--use_ema', action='store_true')
-parser.add_argument('--use_fused_layer_norm', action='store_true')
-parser.add_argument('--use_fused_group_norm', action='store_true')
+parser.add_argument('--use_fused_layernorm', action='store_true')
+parser.add_argument('--use_fused_groupnorm', action='store_true')
 
 # Logger arguments
 parser.add_argument('--wandb_name', type=str)
@@ -63,8 +63,8 @@ class StableDiffusion(composer.models.ComposerModel):
         self.unet = UNet2DConditionModel.from_pretrained(model_name, subfolder='unet')
         self.noise_scheduler = DDPMScheduler.from_pretrained(model_name, subfolder='scheduler')
         if not self.use_latents:
-            self.vae = AutoencoderKL.from_pretrained(model_name, subfolder='vae')
-            self.text_encoder = CLIPTextModel.from_pretrained(model_name, subfolder='text_encoder')
+            self.vae = AutoencoderKL.from_pretrained(model_name, subfolder='vae', torch_dtype=torch.float16)
+            self.text_encoder = CLIPTextModel.from_pretrained(model_name, subfolder='text_encoder', torch_dtype=torch.float16)
 
             # Freeze vae and text_encoder when training
             self.vae.requires_grad_(False)
@@ -74,13 +74,15 @@ class StableDiffusion(composer.models.ComposerModel):
         images, captions = batch['image'], batch['caption']
 
         if not self.use_latents:
-            # Encode the images to the latent space.
-            latents = self.vae.encode(images)['latent_dist'].sample().data
-            # Magical scaling number (See https://github.com/huggingface/diffusers/issues/437#issuecomment-1241827515)
-            latents *= 0.18215
+            # Run the VAE and CLIP in fp16 as it is inference only
+            with torch.no_grad(), torch.cuda.amp.autocast(enabled=False):
+                # Encode the images to the latent space.
+                latents = self.vae.encode(images)['latent_dist'].sample().data
+                # Magical scaling number (See https://github.com/huggingface/diffusers/issues/437#issuecomment-1241827515)
+                latents *= 0.18215
 
-            # Encode the text. Assumes that the text is already tokenized
-            conditioning = self.text_encoder(captions)[0]  # Should be (batch_size, 77, 768)
+                # Encode the text. Assumes that the text is already tokenized
+                conditioning = self.text_encoder(captions)[0]  # Should be (batch_size, 77, 768)
         else:
             latents, conditioning = images, captions
 
@@ -151,9 +153,9 @@ def main(args):
     algorithms = []
     if args.use_ema:
         algorithms.append(EMA())
-    if args.use_fused_layer_norm:
+    if args.use_fused_layernorm:
         algorithms.append(FusedLayerNorm())
-    if args.use_fused_group_norm:
+    if args.use_fused_groupnorm:
         algorithms.append(FusedGroupNorm())
 
     callbacks = [
