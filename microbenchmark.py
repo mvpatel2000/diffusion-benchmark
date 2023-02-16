@@ -18,9 +18,20 @@ from transformers import CLIPTextModel
 from ema import EMA
 from linearize_conv import LinearizeConv
 from channels_last import ChannelsLast
+
+# Local Imports
 # from fused_groupnorm import FusedGroupNorm
-from low_precision_groupnorm import LowPrecisionGroupNorm as FusedGroupNorm
-from fused_layernorm import FusedLayerNorm
+# from low_precision_groupnorm import LowPrecisionGroupNorm as FusedGroupNorm
+# from fused_layernorm import FusedLayerNorm
+
+# Composer Algorithms, applies to entire module...
+# from composer.algorithms import LowPrecisionGroupNorm as FusedGroupNorm
+# from composer.algorithms import LowPrecisionLayerNorm as FusedLayerNorm
+
+# Functional to UNet only
+from composer.core import Precision
+import composer.functional as cf
+
 from data import SyntheticImageCaptionDataset, SyntheticLatentsDataset
 
 try:
@@ -30,6 +41,12 @@ except:
     print('Warning: xformers is not installed.')
     is_xformers_installed = False
 
+try:
+    import bitsandbytes as bnb
+    is_bitsandbytes_installed = True
+except:
+    print('Warning: bitsandbytes is not installed.')
+    is_bitsandbytes_installed = False
 
 parser = argparse.ArgumentParser()
 
@@ -37,7 +54,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--synchronize', action='store_true')
 
 # Dataloader arguments
-parser.add_argument('--batch_size', type=int, default=32)
+parser.add_argument('--batch_size', type=int, default=31)
 parser.add_argument('--image_size', type=int, default=512)
 parser.add_argument('--num_samples', type=int, default=100000)
 parser.add_argument('--use_latents', action='store_true')
@@ -51,6 +68,7 @@ parser.add_argument('--use_linear_conv', action='store_true')
 parser.add_argument('--use_channels_last', action='store_true')
 parser.add_argument('--use_fused_groupnorm', action='store_true')
 parser.add_argument('--use_fused_layernorm', action='store_true')
+parser.add_argument('--use_8bit_optimizer', action='store_true')
 
 # Logger arguments
 parser.add_argument('--wandb_name', type=str)
@@ -138,6 +156,8 @@ def main(args):
             model.vae.enable_xformers_memory_efficient_attention()
 
     optimizer = torch.optim.AdamW(params=model.parameters(), lr=1.0e-4, weight_decay=0.001)
+    if args.use_8bit_optimizer:
+        optimizer = bnb.optim.AdamW8bit(params=model.parameters(), lr=1.0e-4, weight_decay=0.001)
     lr_scheduler = composer.optim.ConstantScheduler()
 
     device_batch_size = args.batch_size // dist.get_world_size()
@@ -163,14 +183,16 @@ def main(args):
     algos = []
     if args.use_ema:
         algos.append(EMA())
-    if args.use_channels_last:
-        algos.append(ChannelsLast())
     if args.use_linear_conv:
         algos.append(LinearizeConv())
     if args.use_fused_groupnorm:
-        algos.append(FusedGroupNorm())
+        # algos.append(FusedGroupNorm())
+        cf.apply_low_precision_groupnorm(model.unet, optimizer, Precision.AMP_FP16)
     if args.use_fused_layernorm:
-        algos.append(FusedLayerNorm())
+        # algos.append(FusedLayerNorm())
+        cf.apply_low_precision_layernorm(model.unet, optimizer, Precision.AMP_FP16)
+    if args.use_channels_last:
+        algos.append(ChannelsLast())
 
     callbacks = [
         SpeedMonitor(window_size=1),

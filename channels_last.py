@@ -62,7 +62,6 @@ class ChannelsLast(Algorithm):
 
     def apply(self, event: Event, state: State, logger: Logger) -> Optional[int]:
         del event, logger  # unused
-        # TODO: Double check model is moved to cuda with device type
+        # Only apply to unet
         apply_channels_last(state.model.unet)
-
         log.info(f'Model {state.model.__class__.__name__} changed to channels_last format.')

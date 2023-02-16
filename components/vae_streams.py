@@ -8,7 +8,7 @@ vae = AutoencoderKL.from_pretrained(model_name, subfolder='vae')
 vae = DeviceGPU().module_to_device(vae)
 vae.requires_grad_(False)
 
-images = torch.randn(8, 3, 512, 512, device='cuda:0')
+images = torch.randn(1, 3, 512, 512, device='cuda:0')
 
 # Burn in
 for _ in range(3):
