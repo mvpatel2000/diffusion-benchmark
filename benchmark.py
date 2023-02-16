@@ -15,9 +15,12 @@ from torchvision import transforms
 from transformers import CLIPTextModel
 
 
+# Copy algorithms from Composer repo for stand-alone example. Normally, these would be imported
+# from upstreamed versions in composer.algorithms
 from ema import EMA
-from low_precision_groupnorm import LowPrecisionGroupNorm as FusedGroupNorm
+from low_precision_groupnorm import LowPrecisionGroupNorm
 from fused_layernorm import FusedLayerNorm
+
 from data import StreamingLAIONDataset, SyntheticImageCaptionDataset, SyntheticLatentsDataset
 
 try:
@@ -156,7 +159,7 @@ def main(args):
     if args.use_fused_layernorm:
         algorithms.append(FusedLayerNorm())
     if args.use_fused_groupnorm:
-        algorithms.append(FusedGroupNorm())
+        algorithms.append(LowPrecisionGroupNorm())
 
     callbacks = [
         SpeedMonitor(window_size=100),
