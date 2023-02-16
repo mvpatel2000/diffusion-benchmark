@@ -18,19 +18,20 @@ from transformers import CLIPTextModel
 from ema import EMA
 from linearize_conv import LinearizeConv
 from channels_last import ChannelsLast
+from predict_speed_monitor import PredictSpeedMonitor
 
 # Local Imports
 # from fused_groupnorm import FusedGroupNorm
-# from low_precision_groupnorm import LowPrecisionGroupNorm as FusedGroupNorm
-# from fused_layernorm import FusedLayerNorm
+from low_precision_groupnorm import LowPrecisionGroupNorm as FusedGroupNorm
+from fused_layernorm import FusedLayerNorm
 
 # Composer Algorithms, applies to entire module...
 # from composer.algorithms import LowPrecisionGroupNorm as FusedGroupNorm
 # from composer.algorithms import LowPrecisionLayerNorm as FusedLayerNorm
 
-# Functional to UNet only
-from composer.core import Precision
-import composer.functional as cf
+# # Functional to UNet only
+# from composer.core import Precision
+# import composer.functional as cf
 
 from data import SyntheticImageCaptionDataset, SyntheticLatentsDataset
 
@@ -52,12 +53,13 @@ parser = argparse.ArgumentParser()
 
 # Benchmarking arguments
 parser.add_argument('--synchronize', action='store_true')
+parser.add_argument('--use_latents', action='store_true')
+parser.add_argument('--compute_latents', action='store_true')
 
 # Dataloader arguments
 parser.add_argument('--batch_size', type=int, default=31)
 parser.add_argument('--image_size', type=int, default=512)
 parser.add_argument('--num_samples', type=int, default=100000)
-parser.add_argument('--use_latents', action='store_true')
 
 # Model argument
 parser.add_argument('--model_name', type=str, default='stabilityai/stable-diffusion-2-base')
@@ -80,10 +82,11 @@ args = parser.parse_args()
 
 class StableDiffusion(composer.models.ComposerModel):
 
-    def __init__(self, model_name: str = 'stabilityai/stable-diffusion-2-base', use_latents: bool = False, synchronize: bool = False):
+    def __init__(self, model_name: str = 'stabilityai/stable-diffusion-2-base', use_latents: bool = False, synchronize: bool = False, compute_latents: bool = False):
         super().__init__()
         self.use_latents = use_latents
         self.synchronize = synchronize
+        self.compute_latents = compute_latents
         self.unet = UNet2DConditionModel.from_pretrained(model_name, subfolder='unet')
         self.noise_scheduler = DDPMScheduler.from_pretrained(model_name, subfolder='scheduler')
         if not self.use_latents:
@@ -122,30 +125,35 @@ class StableDiffusion(composer.models.ComposerModel):
         else:
             latents, conditioning = images, captions
 
-
-        # Sample the diffusion timesteps
-        timesteps = torch.randint(1, len(self.noise_scheduler), (latents.shape[0], ), device=latents.device)
-        # Add noise to the inputs (forward diffusion)
-        noise = torch.randn_like(latents)
-        noised_latents = self.noise_scheduler.add_noise(latents, noise, timesteps)
-        # Forward through the model
-        out = self.unet(noised_latents, timesteps, conditioning)['sample'], noise
-        if self.synchronize:
-            torch.cuda.synchronize()
-        print(f'Unet time: {time.time() - start_time}')
-        return out
+        if not self.compute_latents:
+            # Sample the diffusion timesteps
+            timesteps = torch.randint(1, len(self.noise_scheduler), (latents.shape[0], ), device=latents.device)
+            # Add noise to the inputs (forward diffusion)
+            noise = torch.randn_like(latents)
+            noised_latents = self.noise_scheduler.add_noise(latents, noise, timesteps)
+            # Forward through the model
+            out = self.unet(noised_latents, timesteps, conditioning)['sample'], noise
+            if self.synchronize:
+                torch.cuda.synchronize()
+            print(f'Unet time: {time.time() - start_time}')
+            return out
 
     def loss(self, outputs, batch):
         return F.mse_loss(outputs[0], outputs[1])
 
     def get_metrics(self, is_train: bool):
-        return None
+        return {}
 
 
 def main(args):
     reproducibility.seed_all(17)
 
-    model = StableDiffusion(model_name=args.model_name, use_latents=args.use_latents, synchronize=args.synchronize)
+    model = StableDiffusion(
+        model_name=args.model_name, 
+        use_latents=args.use_latents, 
+        synchronize=args.synchronize,
+        compute_latents=args.compute_latents,
+    )
 
     # Enable xformers memory efficient attention after model has moved to device. Otherwise,
     # xformers will leak memory on rank 0 and never clean it up for non-rank 0 processes.
@@ -186,18 +194,19 @@ def main(args):
     if args.use_linear_conv:
         algos.append(LinearizeConv())
     if args.use_fused_groupnorm:
-        # algos.append(FusedGroupNorm())
-        cf.apply_low_precision_groupnorm(model.unet, optimizer, Precision.AMP_FP16)
+        algos.append(FusedGroupNorm())
+        # cf.apply_low_precision_groupnorm(model.unet, optimizer, Precision.AMP_FP16)
     if args.use_fused_layernorm:
-        # algos.append(FusedLayerNorm())
-        cf.apply_low_precision_layernorm(model.unet, optimizer, Precision.AMP_FP16)
+        algos.append(FusedLayerNorm())
+        # cf.apply_low_precision_layernorm(model.unet, optimizer, Precision.AMP_FP16)
     if args.use_channels_last:
         algos.append(ChannelsLast())
 
     callbacks = [
-        SpeedMonitor(window_size=1),
+        SpeedMonitor(window_size=1) if not args.compute_latents else PredictSpeedMonitor(window_size=1),
         MemoryMonitor()
     ]
+    print(callbacks)
 
     loggers = []
     if args.wandb_name is not None and args.wandb_project is not None:
@@ -222,7 +231,12 @@ def main(args):
         log_to_console=True,
         console_log_interval='1ba'
     )
-    trainer.fit()
+
+    if not args.compute_latents:
+        trainer.fit()
+    else:
+        print('predicting')
+        trainer.predict(dataloader=train_dataloader, subset_num_batches=20, return_outputs=False)
 
 if __name__ == "__main__":
     print(args)
