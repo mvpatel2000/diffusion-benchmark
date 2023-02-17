@@ -79,9 +79,8 @@ class StableDiffusion(composer.models.ComposerModel):
             self.text_encoder.requires_grad_(False)
 
     def forward(self, batch):
-        images, captions = batch['image'], batch['caption']
-
         if self.use_vae_clip:
+            images, captions = batch['image'], batch['caption']
             # Run the VAE and CLIP in fp16 as it is inference only
             with torch.no_grad(), torch.cuda.amp.autocast(enabled=False):
                 # Encode the images to the latent space.
@@ -92,7 +91,7 @@ class StableDiffusion(composer.models.ComposerModel):
                 # Encode the text. Assumes that the text is already tokenized
                 conditioning = self.text_encoder(captions)[0]  # Should be (batch_size, 77, 768)
         else:
-            latents, conditioning = images, captions
+            latents, conditioning = batch['latents'], batch['conditioning']
 
         if self.use_unet:
             # Sample the diffusion timesteps
@@ -196,11 +195,12 @@ def main(args):
         device_train_microbatch_size=device_train_microbatch_size,
     )
 
-    # If UNet is disabled, only run inference to measure throughput of computing latents
-    if args.disable_unet:
-         trainer.predict(dataloader=train_dataloader, subset_num_batches=20, return_outputs=False)
-    else:
+    # Train the model!
+    if not args.disable_unet:
         trainer.fit()
+    # If UNet is disabled, only run inference to measure throughput of computing latents
+    else:
+        trainer.predict(dataloader=train_dataloader, subset_num_batches=20, return_outputs=False)
 
 if __name__ == "__main__":
     print(args)
