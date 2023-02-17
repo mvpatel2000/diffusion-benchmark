@@ -120,7 +120,7 @@ def main(args):
     model = DeviceGPU().module_to_device(model)
     if is_xformers_installed:
         model.unet.enable_xformers_memory_efficient_attention()
-        if not args.use_latents:
+        if not args.disable_vae_clip:
             model.vae.enable_xformers_memory_efficient_attention()
 
     optimizer = torch.optim.AdamW(params=model.parameters(), lr=1.0e-4, weight_decay=0.001)
@@ -130,7 +130,7 @@ def main(args):
 
     sampler = None
     if args.use_synth_data:
-        if args.use_latents:
+        if args.disable_vae_clip:
            train_dataset = SyntheticLatentsDataset(image_size=args.image_size, num_samples=args.num_samples)
         else:
             train_dataset = SyntheticImageCaptionDataset(image_size=args.image_size, num_samples=args.num_samples)
