@@ -210,7 +210,7 @@ def main(args):
         trainer.fit()
     # If UNet is disabled, only run inference to measure throughput of computing latents
     else:
-        trainer.predict(dataloader=train_dataloader, subset_num_batches=20, return_outputs=False)
+        trainer.predict(dataloader=train_dataloader, return_outputs=False)
 
 if __name__ == "__main__":
     print(args)
