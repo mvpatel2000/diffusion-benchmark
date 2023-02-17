@@ -95,12 +95,12 @@ class PredictSpeedMonitor(Callback):
         # Log the throughput
         if len(self.batch_num_samples_buffer) == self.window_size:
             throughput = sum(self.batch_num_samples_buffer) / sum(self.batch_wct_buffer)
-            logger.log_metrics({'throughput/predict_samples_per_sec': throughput})
+            logger.log_metrics({'throughput/predict_samples_per_sec': throughput}, step=state.predict_timestamp.batch.value)
 
         # Log the time
         logger.log_metrics({
             'wall_clock/predict': state.predict_timestamp.total_wct.total_seconds(),
-        })
+        }, step=state.predict_timestamp.batch.value)
 
         # Reset the start time and num samples
         self.batch_start_wct = state.predict_timestamp.total_wct.total_seconds()
