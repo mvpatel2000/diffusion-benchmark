@@ -130,9 +130,9 @@ def main(args):
     device_batch_size = args.batch_size // dist.get_world_size()
     # Override batch size with microbatch size since we don't have microbatching when using predict
     if args.disable_unet:
-        if device_train_microbatch_size * dist.get_world_size() != device_batch_size:
+        if args.device_train_microbatch_size * dist.get_world_size() != device_batch_size:
             warnings.warn(textwrap.dedent(
-                f'`device_train_microbatch_size` ({device_train_microbatch_size}) * num_gpus ({dist.get_world_size()}) '
+                f'`device_train_microbatch_size` ({args.device_train_microbatch_size}) * num_gpus ({dist.get_world_size()}) '
                 f'!= `batch_size` ({args.batch_size}), which must be equal when calling `predict` as predict does not '
                  'microbatch. Ignoring `batch_size` and using `device_train_microbatch_size` instead.'))
         device_batch_size = device_train_microbatch_size
