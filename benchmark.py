@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import argparse
+import warnings
+import textwrap
 
 import composer
 import torch
@@ -15,12 +17,13 @@ from torchvision import transforms
 from transformers import CLIPTextModel
 
 
-# Copy algorithms from Composer repo for stand-alone example. Normally, these would be imported
-# from upstreamed versions in composer.algorithms
+# Locally import algorithms. Normally, these would be imported from composer.algorithms but they
+# are copied here for the benchmark to be more self-contained.
 from ema import EMA
-from low_precision_groupnorm import LowPrecisionGroupNorm
+from low_precision_groupnorm import LowPrecisionGroupNorm as FusedGroupNorm
 from fused_layernorm import FusedLayerNorm
 
+from predict_speed_monitor import PredictSpeedMonitor
 from data import StreamingLAIONDataset, SyntheticImageCaptionDataset, SyntheticLatentsDataset
 
 try:
@@ -33,6 +36,10 @@ except:
 
 parser = argparse.ArgumentParser()
 
+# Benchmark arguments
+parser.add_argument('--disable_vae_clip', action='store_true')  # If set, use precomputed latents
+parser.add_argument('--disable_unet', action='store_true')      # If set, only compute the latents
+
 # Dataloader arguments
 parser.add_argument('--batch_size', type=int, default=2048)
 parser.add_argument('--image_size', type=int, default=512)
@@ -40,12 +47,12 @@ parser.add_argument('--num_samples', type=int, default=800000)
 parser.add_argument('--remote', type=str)
 parser.add_argument('--local', type=str, default='/tmp/mds-cache/mds-laion-2/')
 parser.add_argument('--use_synth_data', action='store_true')
-parser.add_argument('--use_latents', action='store_true')
 
 # Model argument
 parser.add_argument('--model_name', type=str, default='stabilityai/stable-diffusion-2-base')
+parser.add_argument('--use_fsdp_unet', action='store_true')
 
-# EMA argument
+# Algorithm argument
 parser.add_argument('--use_ema', action='store_true')
 parser.add_argument('--use_fused_layernorm', action='store_true')
 parser.add_argument('--use_fused_groupnorm', action='store_true')
@@ -56,16 +63,29 @@ parser.add_argument('--wandb_project', type=str)
 
 # Trainer arguments
 parser.add_argument('--device_train_microbatch_size', type=int)
+parser.add_argument('--learning_rate', type=float, default=1.0e-4)
 args = parser.parse_args()
 
 class StableDiffusion(composer.models.ComposerModel):
 
-    def __init__(self, model_name: str = 'stabilityai/stable-diffusion-2-base', use_latents: bool = False):
+    def __init__(self, 
+        model_name: str = 'stabilityai/stable-diffusion-2-base', 
+        use_vae_clip: bool = True, 
+        use_unet: bool = True,
+        use_fsdp_unet: bool = False,
+    ):
         super().__init__()
-        self.use_latents = use_latents
+        self.use_vae_clip = use_vae_clip
+        self.use_unet = use_unet
         self.unet = UNet2DConditionModel.from_pretrained(model_name, subfolder='unet')
         self.noise_scheduler = DDPMScheduler.from_pretrained(model_name, subfolder='scheduler')
-        if not self.use_latents:
+
+        # Wrap the UNet in FSDP
+        if use_fsdp_unet:
+            self.unet._fsdp_wrap = True
+
+        # Optionally load VAE/CLIP for preprocessing
+        if self.use_vae_clip:
             self.vae = AutoencoderKL.from_pretrained(model_name, subfolder='vae', torch_dtype=torch.float16)
             self.text_encoder = CLIPTextModel.from_pretrained(model_name, subfolder='text_encoder', torch_dtype=torch.float16)
 
@@ -74,9 +94,8 @@ class StableDiffusion(composer.models.ComposerModel):
             self.text_encoder.requires_grad_(False)
 
     def forward(self, batch):
-        images, captions = batch['image'], batch['caption']
-
-        if not self.use_latents:
+        if self.use_vae_clip:
+            images, captions = batch['image'], batch['caption']
             # Run the VAE and CLIP in fp16 as it is inference only
             with torch.no_grad(), torch.cuda.amp.autocast(enabled=False):
                 # Encode the images to the latent space.
@@ -87,15 +106,16 @@ class StableDiffusion(composer.models.ComposerModel):
                 # Encode the text. Assumes that the text is already tokenized
                 conditioning = self.text_encoder(captions)[0]  # Should be (batch_size, 77, 768)
         else:
-            latents, conditioning = images, captions
+            latents, conditioning = batch['latents'], batch['conditioning']
 
-        # Sample the diffusion timesteps
-        timesteps = torch.randint(1, len(self.noise_scheduler), (latents.shape[0], ), device=latents.device)
-        # Add noise to the inputs (forward diffusion)
-        noise = torch.randn_like(latents)
-        noised_latents = self.noise_scheduler.add_noise(latents, noise, timesteps)
-        # Forward through the model
-        return self.unet(noised_latents, timesteps, conditioning)['sample'], noise
+        if self.use_unet:
+            # Sample the diffusion timesteps
+            timesteps = torch.randint(1, len(self.noise_scheduler), (latents.shape[0], ), device=latents.device)
+            # Add noise to the inputs (forward diffusion)
+            noise = torch.randn_like(latents)
+            noised_latents = self.noise_scheduler.add_noise(latents, noise, timesteps)
+            # Forward through the model
+            return self.unet(noised_latents, timesteps, conditioning)['sample'], noise
 
     def loss(self, outputs, batch):
         return F.mse_loss(outputs[0], outputs[1])
@@ -107,31 +127,51 @@ class StableDiffusion(composer.models.ComposerModel):
 def main(args):
     reproducibility.seed_all(17)
 
-    model = StableDiffusion(model_name=args.model_name, use_latents=args.use_latents)
+    model = StableDiffusion(
+        model_name=args.model_name,
+        use_vae_clip=not args.disable_vae_clip,
+        use_unet=not args.disable_unet,
+        use_fsdp_unet=args.use_fsdp_unet,
+    )
+
+    # Set FSDP Config
+    fsdp_config = None
+    if args.use_fsdp_unet:
+        fsdp_config = {
+            'sharding_strategy': 'SHARD_GRAD_OP',
+        }
 
     # Enable xformers memory efficient attention after model has moved to device. Otherwise,
     # xformers will leak memory on rank 0 and never clean it up for non-rank 0 processes.
     model = DeviceGPU().module_to_device(model)
     if is_xformers_installed:
         model.unet.enable_xformers_memory_efficient_attention()
-        if not args.use_latents:
+        if not args.disable_vae_clip:
             model.vae.enable_xformers_memory_efficient_attention()
 
-    optimizer = torch.optim.AdamW(params=model.parameters(), lr=1.0e-4, weight_decay=0.001)
+    optimizer = torch.optim.AdamW(params=model.parameters(), lr=args.learning_rate, weight_decay=0.001)
     lr_scheduler = composer.optim.ConstantScheduler()
 
     device_batch_size = args.batch_size // dist.get_world_size()
+    # Override batch size with microbatch size since we don't have microbatching when using predict
+    if args.disable_unet:
+        if args.device_train_microbatch_size * dist.get_world_size() != device_batch_size:
+            warnings.warn(textwrap.dedent(
+                f'`device_train_microbatch_size` ({args.device_train_microbatch_size}) * num_gpus ({dist.get_world_size()}) '
+                f'!= `batch_size` ({args.batch_size}), which must be equal when calling `predict` as predict does not '
+                 'microbatch. Ignoring `batch_size` and using `device_train_microbatch_size` instead.'))
+        device_batch_size = args.device_train_microbatch_size
 
     sampler = None
     if args.use_synth_data:
-        if args.use_latents:
+        if args.disable_vae_clip:
            train_dataset = SyntheticLatentsDataset(image_size=args.image_size, num_samples=args.num_samples)
         else:
             train_dataset = SyntheticImageCaptionDataset(image_size=args.image_size, num_samples=args.num_samples)
         sampler = dist.get_sampler(train_dataset, drop_last=True, shuffle=True)
     else:
-        if args.use_latents:
-            raise ValueError('--use_latents is valid unless using synthetic data --use_synth_data')
+        if args.disable_vae_clip:
+            raise ValueError('`--disable_vae_clip` is only valid when using synthetic data `--use_synth_data`')
         resize_transform = transforms.Resize((args.image_size, args.image_size))
         transform = transforms.Compose([resize_transform, transforms.ToTensor()])
         train_dataset = StreamingLAIONDataset(remote=args.remote,
@@ -159,10 +199,16 @@ def main(args):
     if args.use_fused_layernorm:
         algorithms.append(FusedLayerNorm())
     if args.use_fused_groupnorm:
-        algorithms.append(LowPrecisionGroupNorm())
+        algorithms.append(FusedGroupNorm())
+
+    speed_monitor = None
+    if args.disable_unet:
+        speed_monitor = PredictSpeedMonitor(window_size=100)  # Predict requires different events
+    else:
+        speed_monitor = SpeedMonitor(window_size=100)
 
     callbacks = [
-        SpeedMonitor(window_size=100),
+        speed_monitor,
         MemoryMonitor(),
     ]
 
@@ -174,6 +220,7 @@ def main(args):
 
     trainer = composer.Trainer(
         model=model,
+        fsdp_config=fsdp_config,
         train_dataloader=train_dataloader,
         optimizers=optimizer,
         schedulers=lr_scheduler,
@@ -183,7 +230,13 @@ def main(args):
         max_duration='1ep',
         device_train_microbatch_size=device_train_microbatch_size,
     )
-    trainer.fit()
+
+    # Train the model!
+    if not args.disable_unet:
+        trainer.fit()
+    # If UNet is disabled, only run inference to measure throughput of computing latents
+    else:
+        trainer.predict(dataloader=train_dataloader, return_outputs=False)
 
 if __name__ == "__main__":
     print(args)
