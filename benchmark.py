@@ -50,6 +50,7 @@ parser.add_argument('--use_synth_data', action='store_true')
 
 # Model argument
 parser.add_argument('--model_name', type=str, default='stabilityai/stable-diffusion-2-base')
+parser.add_argument('--fsdp_unet', action='store_true')
 
 # Algorithm argument
 parser.add_argument('--use_ema', action='store_true')
@@ -66,12 +67,23 @@ args = parser.parse_args()
 
 class StableDiffusion(composer.models.ComposerModel):
 
-    def __init__(self, model_name: str = 'stabilityai/stable-diffusion-2-base', use_vae_clip: bool = True, use_unet: bool = True):
+    def __init__(self, 
+        model_name: str = 'stabilityai/stable-diffusion-2-base', 
+        use_vae_clip: bool = True, 
+        use_unet: bool = True,
+        fsdp_unet: bool = False,
+    ):
         super().__init__()
         self.use_vae_clip = use_vae_clip
         self.use_unet = use_unet
         self.unet = UNet2DConditionModel.from_pretrained(model_name, subfolder='unet')
         self.noise_scheduler = DDPMScheduler.from_pretrained(model_name, subfolder='scheduler')
+
+        # Wrap the UNet in FSDP
+        if fsdp_unet:
+            self.unet._fsdp_wrap = True
+
+        # Optionally load VAE/CLIP for preprocessing
         if self.use_vae_clip:
             self.vae = AutoencoderKL.from_pretrained(model_name, subfolder='vae', torch_dtype=torch.float16)
             self.text_encoder = CLIPTextModel.from_pretrained(model_name, subfolder='text_encoder', torch_dtype=torch.float16)
@@ -114,7 +126,19 @@ class StableDiffusion(composer.models.ComposerModel):
 def main(args):
     reproducibility.seed_all(17)
 
-    model = StableDiffusion(model_name=args.model_name, use_vae_clip=not args.disable_vae_clip, use_unet=not args.disable_unet)
+    model = StableDiffusion(
+        model_name=args.model_name,
+        use_vae_clip=not args.disable_vae_clip,
+        use_unet=not args.disable_unet,
+        fsdp_unet=args.fsdp_unet,
+    )
+
+    # Set FSDP Config
+    fsdp_config = None
+    if args.fsdp_unet:
+        fsdp_config = {
+            'sharding_strategy': 'SHARD_GRAD_OP',
+        }
 
     # Enable xformers memory efficient attention after model has moved to device. Otherwise,
     # xformers will leak memory on rank 0 and never clean it up for non-rank 0 processes.
@@ -195,6 +219,7 @@ def main(args):
 
     trainer = composer.Trainer(
         model=model,
+        fsdp_config=fsdp_config,
         train_dataloader=train_dataloader,
         optimizers=optimizer,
         schedulers=lr_scheduler,
