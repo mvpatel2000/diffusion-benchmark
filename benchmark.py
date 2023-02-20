@@ -50,7 +50,7 @@ parser.add_argument('--use_synth_data', action='store_true')
 
 # Model argument
 parser.add_argument('--model_name', type=str, default='stabilityai/stable-diffusion-2-base')
-parser.add_argument('--fsdp_unet', action='store_true')
+parser.add_argument('--use_fsdp_unet', action='store_true')
 
 # Algorithm argument
 parser.add_argument('--use_ema', action='store_true')
@@ -71,7 +71,7 @@ class StableDiffusion(composer.models.ComposerModel):
         model_name: str = 'stabilityai/stable-diffusion-2-base', 
         use_vae_clip: bool = True, 
         use_unet: bool = True,
-        fsdp_unet: bool = False,
+        use_fsdp_unet: bool = False,
     ):
         super().__init__()
         self.use_vae_clip = use_vae_clip
@@ -80,7 +80,7 @@ class StableDiffusion(composer.models.ComposerModel):
         self.noise_scheduler = DDPMScheduler.from_pretrained(model_name, subfolder='scheduler')
 
         # Wrap the UNet in FSDP
-        if fsdp_unet:
+        if use_fsdp_unet:
             self.unet._fsdp_wrap = True
 
         # Optionally load VAE/CLIP for preprocessing
@@ -130,12 +130,12 @@ def main(args):
         model_name=args.model_name,
         use_vae_clip=not args.disable_vae_clip,
         use_unet=not args.disable_unet,
-        fsdp_unet=args.fsdp_unet,
+        use_fsdp_unet=args.use_fsdp_unet,
     )
 
     # Set FSDP Config
     fsdp_config = None
-    if args.fsdp_unet:
+    if args.use_fsdp_unet:
         fsdp_config = {
             'sharding_strategy': 'SHARD_GRAD_OP',
         }
