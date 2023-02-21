@@ -119,6 +119,6 @@ class SyntheticLatentsDataset(Dataset):
         return self.num_samples
 
     def __getitem__(self, idx):
-        image = torch.randn(4, self.image_size // 8, self.image_size // 8)
-        caption = torch.randn(self.caption_length, 1024)
-        return {'image': image, 'caption': caption}
+        latents = torch.randn(4, self.image_size // 8, self.image_size // 8)
+        conditioning = torch.randn(self.caption_length, 1024)
+        return {'latents': latents, 'conditioning': conditioning}
