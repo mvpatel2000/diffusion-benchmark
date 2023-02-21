@@ -82,9 +82,11 @@ class StableDiffusion(composer.models.ComposerModel):
 
         # Wrap the UNet in FSDP
         if use_fsdp_unet:
-            self.unet.down_blocks._fsdp_wrap = True
+            for down_block in self.unet.down_blocks:
+                down_block._fsdp_wrap = True
             self.unet.mid_block._fsdp_wrap = True
-            self.unet.up_blocks._fsdp_wrap = True
+            for up_block in self.unet.up_blocks:
+                up_block._fsdp_wrap = True
 
         # Optionally load VAE/CLIP for preprocessing
         if self.use_vae_clip:
