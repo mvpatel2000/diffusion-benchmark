@@ -84,8 +84,10 @@ class StableDiffusion(composer.models.ComposerModel):
 
         # Wrap the UNet in FSDP
         if use_fsdp_global_unet:
+            print('global wrap')
             self.unet._fsdp_wrap = True
         if use_fsdp_local_unet:
+            print('local wrap')
             for up_block in self.unet.up_blocks:
                 up_block._fsdp_wrap = True
             self.unet.mid_block._fsdp_wrap = True
