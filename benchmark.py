@@ -50,7 +50,8 @@ parser.add_argument('--use_synth_data', action='store_true')
 
 # Model argument
 parser.add_argument('--model_name', type=str, default='stabilityai/stable-diffusion-2-base')
-parser.add_argument('--use_fsdp_unet', action='store_true')
+parser.add_argument('--use_fsdp_global_unet', action='store_true')
+parser.add_argument('--use_fsdp_local_unet', action='store_true')
 
 # Algorithm argument
 parser.add_argument('--use_ema', action='store_true')
@@ -72,7 +73,8 @@ class StableDiffusion(composer.models.ComposerModel):
         model_name: str = 'stabilityai/stable-diffusion-2-base', 
         use_vae_clip: bool = True, 
         use_unet: bool = True,
-        use_fsdp_unet: bool = False,
+        use_fsdp_global_unet: bool = False,
+        use_fsdp_local_unet: bool = False,
     ):
         super().__init__()
         self.use_vae_clip = use_vae_clip
@@ -81,9 +83,11 @@ class StableDiffusion(composer.models.ComposerModel):
         self.noise_scheduler = DDPMScheduler.from_pretrained(model_name, subfolder='scheduler')
 
         # Wrap the UNet in FSDP
-        if use_fsdp_unet:
-            for down_block in self.unet.down_blocks:
-                down_block._fsdp_wrap = True
+        if use_fsdp_global_unet:
+            self.unet._fsdp_wrap = True
+        if use_fsdp_local_unet:
+            for up_block in self.unet.up_blocks:
+                up_block._fsdp_wrap = True
             self.unet.mid_block._fsdp_wrap = True
             for up_block in self.unet.up_blocks:
                 up_block._fsdp_wrap = True
@@ -131,16 +135,23 @@ class StableDiffusion(composer.models.ComposerModel):
 def main(args):
     reproducibility.seed_all(17)
 
+    # Validate params
+    if args.disable_vae_clip and args.disable_unet:
+        raise ValueError('Cannot disable both VAE/CLIP and UNet')
+    if args.use_fsdp_global_unet and args.use_fsdp_local_unet:
+        raise ValueError('Cannot use both global and local UNet FSDP')
+
     model = StableDiffusion(
         model_name=args.model_name,
         use_vae_clip=not args.disable_vae_clip,
         use_unet=not args.disable_unet,
-        use_fsdp_unet=args.use_fsdp_unet,
+        use_fsdp_global_unet=args.use_fsdp_global_unet,
+        use_fsdp_local_unet=args.use_fsdp_local_unet,
     )
 
     # Set FSDP Config
     fsdp_config = None
-    if args.use_fsdp_unet:
+    if args.use_fsdp_global_unet:
         fsdp_config = {
             'sharding_strategy': 'SHARD_GRAD_OP',
         }
