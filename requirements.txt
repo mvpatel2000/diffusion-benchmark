@@ -5,3 +5,5 @@ mosaicml[wandb]==0.12.1
 ninja # Faster xformers install
 diffusers[torch]
 transformers[torch]
+xformers==0.0.16
+triton==2.0.0.dev20230208
