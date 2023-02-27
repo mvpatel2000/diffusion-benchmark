@@ -65,6 +65,7 @@ parser.add_argument('--wandb_project', type=str)
 # Trainer arguments
 parser.add_argument('--device_train_microbatch_size', type=int)
 parser.add_argument('--learning_rate', type=float, default=1.0e-4)
+parser.add_argument('--weight_decay', type=float, default=0.0)
 args = parser.parse_args()
 
 class StableDiffusion(composer.models.ComposerModel):
@@ -164,7 +165,7 @@ def main(args):
         if not args.disable_vae_clip:
             model.vae.enable_xformers_memory_efficient_attention()
 
-    optimizer = torch.optim.AdamW(params=model.parameters(), lr=args.learning_rate, weight_decay=0.001)
+    optimizer = torch.optim.AdamW(params=model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     lr_scheduler = composer.optim.ConstantScheduler()
 
     device_batch_size = args.batch_size // dist.get_world_size()
