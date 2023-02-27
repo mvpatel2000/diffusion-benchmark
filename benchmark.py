@@ -165,7 +165,8 @@ def main(args):
         if not args.disable_vae_clip:
             model.vae.enable_xformers_memory_efficient_attention()
 
-    optimizer = torch.optim.AdamW(params=model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
+    # optimizer = torch.optim.AdamW(params=model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
+    optimizer = torch.optim.SGD(params=model.parameters(), lr=args.learning_rate)
     lr_scheduler = composer.optim.ConstantScheduler()
 
     device_batch_size = args.batch_size // dist.get_world_size()
